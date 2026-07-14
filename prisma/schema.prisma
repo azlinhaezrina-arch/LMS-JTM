@@ -1,0 +1,449 @@
+// =============================================================================
+// LMS JTM — Prisma Schema (Supabase-style architecture on SQLite)
+// =============================================================================
+// Design principles mirroring Supabase:
+//   • UUID primary keys (cuid) — Supabase uses uuid, we use cuid for portability
+//   • Multi-tenant via CampusId — every tenant-scoped record carries CampusId
+//   • created_at / updated_at timestamps on every table (Supabase convention)
+//   • Row-Level Security simulated at the API layer (filter by user.campusId + role)
+//   • auth.users analogue: User model with role, status, lastSignInAt, metadata
+//   • Referential integrity enforced via Prisma relations
+//
+// SQLite limitations handled:
+//   • No native enums → String fields with TS union types in /lib/types.ts
+//   • No arrays → JSON string columns (Prisma) or junction tables
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// CAMPUS (Multi-tenant root — 33 ADTEC campuses + JTM HQ)
+// ---------------------------------------------------------------------------
+model Campus {
+  id            String   @id @default(cuid())
+  code          String   @unique // e.g. ADTEC-SA, ADTEC-PG, JTM-HQ
+  name          String
+  nameEn        String?
+  state         String
+  region        String // Utara / Selatan / Tengah / Timur / Sabah / Sarawak
+  address       String?
+  phone         String?
+  email         String?
+  status        String   @default("active") // active | inactive
+  establishedAt String? // year
+  metadata      String?  @default("{}") // JSON: facilities, capacity etc
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         User[]
+  courses       Course[]
+  enrollments   Enrollment[]
+  certificates  Certificate[]
+  auditLogs     AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// USER (auth.users analogue — SSO via MyDigital ID simulated)
+// ---------------------------------------------------------------------------
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  avatarUrl      String?
+  role           String   @default("pelajar") // super_admin | admin_kampus | pengajar | pelajar | auditor
+  campusId       String?  // null = JTM HQ super admin (cross-tenant)
+  campus         Campus?  @relation(fields: [campusId], references: [id])
+  // SSO / auth metadata
+  ssoProvider    String   @default("mydigital_id") // mydigital_id | google | local
+  ssoSubject     String?  // external SSO subject id
+  status         String   @default("active") // active | suspended | pending
+  lastSignInAt   DateTime?
+  // Profile
+  phone          String?
+  icNumber       String? // NRIC
+  employeeId     String?
+  preferredLang  String   @default("ms") // ms | en
+  metadata       String?  @default("{}")
+  points         Int      @default(0)
+  streak         Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  enrollments      Enrollment[]
+  teachings        Course[]      @relation("InstructorCourses")
+  forumThreads     ForumThread[]
+  forumPosts       ForumPost[]
+  quizAttempts     QuizAttempt[]
+  certificates     Certificate[]
+  userBadges       UserBadge[]
+  competencies     UserCompetency[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  aiConversations  AIConversation[]
+  progressRecords  Progress[]
+}
+
+// ---------------------------------------------------------------------------
+// COURSE CATALOG
+// ---------------------------------------------------------------------------
+model CourseCategory {
+  id          String   @id @default(cuid())
+  name        String
+  nameEn      String?
+  slug        String   @unique
+  icon        String?
+  color       String?
+  description String?
+  createdAt   DateTime @default(now())
+
+  courses     Course[]
+}
+
+model Course {
+  id            String   @id @default(cuid())
+  code          String   @unique // e.g. JTM-MEK-101
+  title         String
+  titleEn       String?
+  description   String
+  categoryId    String?
+  category      CourseCategory? @relation(fields: [categoryId], references: [id])
+  campusId      String
+  campus        Campus   @relation(fields: [campusId], references: [id])
+  instructorId  String?
+  instructor    User?    @relation("InstructorCourses", fields: [instructorId], references: [id])
+  level         String   @default("beginner") // beginner | intermediate | advanced
+  format        String   @default("blended") // online | blended | physical
+  durationHours Int      @default(0)
+  durationDays  Int      @default(0)
+  credits       Int      @default(0)
+  price         Float    @default(0)
+  currency      String   @default("MYR")
+  quota         Int      @default(30)
+  enrolledCount Int      @default(0)
+  rating        Float    @default(0)
+  ratingCount   Int      @default(0)
+  coverColor    String   @default("emerald")
+  coverIcon     String   @default("book-open")
+  tags          String?  @default("[]")
+  status        String   @default("published") // draft | published | archived
+  startDate     String?
+  endDate       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  modules        Module[]
+  enrollments    Enrollment[]
+  quizzes        Quiz[]
+  forumThreads   ForumThread[]
+  certificates   Certificate[]
+  competencies   CourseCompetency[]
+}
+
+model Module {
+  id          String   @id @default(cuid())
+  courseId     String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  order       Int      @default(0)
+  durationMin Int      @default(0)
+  isLocked    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  contents    Content[]
+}
+
+model Content {
+  id          String   @id @default(cuid())
+  moduleId    String
+  module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title       String
+  type        String   @default("video") // video | scorm | h5p | pdf | article | articulate
+  url         String?
+  durationSec Int      @default(0)
+  sizeKb      Int      @default(0)
+  description String?
+  isDownloadable Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  progress    Progress[]
+}
+
+// ---------------------------------------------------------------------------
+// ENROLMENT & PROGRESS (learning record store)
+// ---------------------------------------------------------------------------
+model Enrollment {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId     String
+  course      Course   @relation(fields: [courseId], references: [id])
+  campusId    String
+  campus      Campus   @relation(fields: [campusId], references: [id])
+  status      String   @default("active") // active | completed | dropped | pending
+  progressPct Int      @default(0)
+  enrolledAt  DateTime @default(now())
+  completedAt DateTime?
+  finalScore  Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  progress      Progress[]
+  quizAttempts  QuizAttempt[]
+  certificate   Certificate?
+}
+
+model Progress {
+  id           String   @id @default(cuid())
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  contentId    String
+  content      Content  @relation(fields: [contentId], references: [id])
+  status       String   @default("not_started") // not_started | in_progress | completed
+  timeSpentSec Int      @default(0)
+  score        Float?
+  completedAt  DateTime?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([enrollmentId, contentId])
+}
+
+// ---------------------------------------------------------------------------
+// ASSESSMENT — Quiz, Question, Attempt
+// ---------------------------------------------------------------------------
+model Quiz {
+  id          String   @id @default(cuid())
+  courseId     String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleId    String?
+  title       String
+  description String?
+  questionCount Int    @default(0)
+  passMark    Float    @default(60)
+  timeLimitMin Int     @default(30)
+  maxAttempts Int      @default(3)
+  weight      Float    @default(1)
+  createdAt   DateTime @default(now())
+
+  questions   Question[]
+  attempts    QuizAttempt[]
+}
+
+model Question {
+  id          String   @id @default(cuid())
+  quizId      String
+  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  type        String   @default("mcq") // mcq | true_false | fill_blank | essay
+  text        String
+  options     String   @default("[]") // [{id, text}]
+  correctAnswer String? // ["a"] or "true" or "essay"
+  explanation String?
+  marks       Float    @default(1)
+  order       Int      @default(0)
+
+  attempts    QuizAttempt[]
+}
+
+model QuizAttempt {
+  id           String   @id @default(cuid())
+  quizId       String
+  quiz         Quiz     @relation(fields: [quizId], references: [id])
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id])
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  answers      String   @default("{}") // {questionId: answer}
+  score        Float    @default(0)
+  maxScore     Float    @default(0)
+  percentage   Float    @default(0)
+  passed       Boolean  @default(false)
+  startedAt    DateTime @default(now())
+  submittedAt  DateTime?
+
+  questions    Question[]
+}
+
+// ---------------------------------------------------------------------------
+// FORUM & COMMUNICATION
+// ---------------------------------------------------------------------------
+model ForumThread {
+  id          String   @id @default(cuid())
+  courseId     String?
+  course      Course?  @relation(fields: [courseId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  title       String
+  body        String
+  tags        String?  @default("[]")
+  views       Int      @default(0)
+  isPinned    Boolean  @default(false)
+  isResolved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  posts       ForumPost[]
+}
+
+model ForumPost {
+  id          String   @id @default(cuid())
+  threadId    String
+  thread      ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  body        String
+  likes       Int      @default(0)
+  isAnswer    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// CERTIFICATES (QR-verifiable) & DIGITAL BADGES (Open Badges)
+// ---------------------------------------------------------------------------
+model Certificate {
+  id             String   @id @default(cuid())
+  certNumber     String   @unique // JTM-2026-XXXXXX
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  courseId        String
+  course         Course   @relation(fields: [courseId], references: [id])
+  campusId       String
+  campus         Campus   @relation(fields: [campusId], references: [id])
+  enrollmentId   String   @unique
+  enrollment     Enrollment @relation(fields: [enrollmentId], references: [id])
+  verifyCode     String   @unique // QR verify token
+  title          String
+  recipientName  String
+  recipientIc    String?
+  score          Float
+  grade          String // A+ | A | B+ | B | C | Lulus
+  issuedAt       DateTime @default(now())
+  expiryAt       DateTime?
+  status         String   @default("valid") // valid | revoked
+  signature      String   @default("Jabatan Tenaga Manusia (JTM)")
+  createdAt      DateTime @default(now())
+}
+
+model Badge {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  nameEn      String?
+  description String
+  icon        String   @default("award")
+  color       String   @default("amber")
+  criteria    String   // {type, threshold}
+  issuer      String   @default("Jabatan Tenaga Manusia")
+  createdAt   DateTime @default(now())
+
+  userBadges  UserBadge[]
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId   String
+  badge     Badge    @relation(fields: [badgeId], references: [id])
+  awardedAt DateTime @default(now())
+  evidence  String? 
+
+  @@unique([userId, badgeId])
+}
+
+// ---------------------------------------------------------------------------
+// COMPETENCY TRACKING (SKM / NOSS)
+// ---------------------------------------------------------------------------
+model Competency {
+  id          String   @id @default(cuid())
+  code        String   @unique // e.g. SKM-MEK-001, NOSS-XXX
+  name        String
+  nameEn      String?
+  framework   String   @default("SKM") // SKM | NOSS
+  level       Int      @default(1) // SKM level 1-5
+  sector      String? // e.g. Mekatronik, Elektrik, IT
+  description String?
+  createdAt   DateTime @default(now())
+
+  courses     CourseCompetency[]
+  users       UserCompetency[]
+}
+
+model CourseCompetency {
+  id            String   @id @default(cuid())
+  courseId      String
+  course        Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  competencyId String
+  competency    Competency @relation(fields: [competencyId], references: [id])
+  weight        Float    @default(1)
+
+  @@unique([courseId, competencyId])
+}
+
+model UserCompetency {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  competencyId  String
+  competency    Competency @relation(fields: [competencyId], references: [id])
+  status        String   @default("in_progress") // not_started | in_progress | achieved | expired
+  achievedAt    DateTime?
+  evidence      String? 
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, competencyId])
+}
+
+// ---------------------------------------------------------------------------
+// NOTIFICATIONS, AUDIT LOG
+// ---------------------------------------------------------------------------
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   @default("info") // info | success | warning | error | badge | certificate
+  title     String
+  message   String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  campusId  String?
+  campus    Campus?  @relation(fields: [campusId], references: [id])
+  action    String // e.g. "user.login", "course.publish", "certificate.issue"
+  entity    String?
+  entityId  String?
+  details   String?  @default("{}")
+  ip        String?
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// AI LEARNING ASSISTANT — conversation history
+// ---------------------------------------------------------------------------
+model AIConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId   String?
+  title     String?
+  messages  String   @default("[]") // [{role, content, ts}]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

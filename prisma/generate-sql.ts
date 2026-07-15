@@ -19,7 +19,11 @@ function pickN<T>(arr: T[], n: number): T[] {
   return out
 }
 function int(min: number, max: number) { return Math.floor(rand() * (max - min + 1)) + min }
-function id() { return 'seed_' + Math.random().toString(36).slice(2, 12) }
+// Global monotonic counter — guarantees unique IDs within a single SQL file run.
+// (PostgreSQL evaluates sq(id()) ONCE per INSERT row in subquery-based inserts,
+//  so Math.random() would assign the same id to multiple rows. The counter avoids this.)
+let _idCounter = 0
+function id() { _idCounter++; return 'seed_' + _idCounter.toString(36).padStart(8, '0') + '_' + seedState.toString(36) }
 // SQL string escape
 function sq(s: string | null | undefined): string {
   if (s === null || s === undefined) return 'NULL'
@@ -635,10 +639,14 @@ async function main() {
       // We can't easily reference content IDs here (they weren't stored). Insert progress against a few random content rows via subquery later is complex.
       // Simpler: skip granular progress rows in SQL (the app computes progressPct from count anyway; we already set progressPct above).
       // For realism, insert a few Progress rows by selecting random contents of this course.
+      // IMPORTANT: use gen_random_uuid()::text and floor(random()*...) so Postgres
+      // evaluates these PER ROW. Using sq(id()) here would evaluate once in JS and
+      // assign the same id to all rows → duplicate key violation.
       emit(`INSERT INTO "Progress" (id, "enrollmentId", "userId", "contentId", status, "timeSpentSec", score, "completedAt", "updatedAt")
-SELECT ${sq(id())}, ${sq(enrId)}, ${sq(student.id)}, c.id,
+SELECT gen_random_uuid()::text, ${sq(enrId)}, ${sq(student.id)}, c.id,
   CASE WHEN ${progressPct} = 0 THEN 'not_started' WHEN random() < ${progressPct}/100.0 THEN 'completed' ELSE 'in_progress' END,
-  ${int(60, 1800)}, ${progressPct >= 30 ? int(70, 100) : 'NULL'},
+  floor(60 + random()*1740)::int,
+  ${progressPct >= 30 ? 'floor(70 + random()*30)::int' : 'NULL'},
   CASE WHEN random() < ${progressPct}/100.0 THEN now() ELSE NULL END, now()
 FROM "Content" c JOIN "Module" m ON c."moduleId" = m.id WHERE m."courseId" = ${sq(crs.id)} LIMIT 5;`)
 
@@ -646,7 +654,7 @@ FROM "Content" c JOIN "Module" m ON c."moduleId" = m.id WHERE m."courseId" = ${s
       if (progressPct >= 30) {
         const pct = pick([55, 65, 72, 80, 88, 95])
         emit(`INSERT INTO "QuizAttempt" (id, "quizId", "enrollmentId", "userId", answers, score, "maxScore", percentage, passed, "startedAt", "submittedAt")
-SELECT ${sq(id())}, q.id, ${sq(enrId)}, ${sq(student.id)}, '{}'::jsonb, ${Math.round(pct / 100 * 5 * 10) / 10}, 5, ${pct}, ${pct >= 60 ? 'TRUE' : 'FALSE'}, now(), now()
+SELECT gen_random_uuid()::text, q.id, ${sq(enrId)}, ${sq(student.id)}, '{}'::jsonb, ${Math.round(pct / 100 * 5 * 10) / 10}, 5, ${pct}, ${pct >= 60 ? 'TRUE' : 'FALSE'}, now(), now()
 FROM "Quiz" q WHERE q."courseId" = ${sq(crs.id)} LIMIT 1;`)
       }
 

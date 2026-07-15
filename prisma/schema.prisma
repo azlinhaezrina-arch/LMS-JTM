@@ -1,17 +1,15 @@
 // =============================================================================
-// LMS JTM — Prisma Schema (Supabase-style architecture on SQLite)
+// elearning JTM — Prisma Schema (Supabase PostgreSQL)
 // =============================================================================
+// Hosted on Supabase (PostgreSQL 15) — project tvvtlgytkauijkshgbdc
 // Design principles mirroring Supabase:
-//   • UUID primary keys (cuid) — Supabase uses uuid, we use cuid for portability
+//   • UUID-style primary keys (cuid) — Supabase convention
 //   • Multi-tenant via CampusId — every tenant-scoped record carries CampusId
 //   • created_at / updated_at timestamps on every table (Supabase convention)
 //   • Row-Level Security simulated at the API layer (filter by user.campusId + role)
 //   • auth.users analogue: User model with role, status, lastSignInAt, metadata
 //   • Referential integrity enforced via Prisma relations
-//
-// SQLite limitations handled:
-//   • No native enums → String fields with TS union types in /lib/types.ts
-//   • No arrays → JSON string columns (Prisma) or junction tables
+//   • Native JSON columns (@Json) for flexible metadata
 // =============================================================================
 
 generator client {
@@ -19,8 +17,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -38,7 +37,7 @@ model Campus {
   email         String?
   status        String   @default("active") // active | inactive
   establishedAt String? // year
-  metadata      String?  @default("{}") // JSON: facilities, capacity etc
+  metadata      Json?    @default("{}") // facilities, capacity etc
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -70,7 +69,7 @@ model User {
   icNumber       String? // NRIC
   employeeId     String?
   preferredLang  String   @default("ms") // ms | en
-  metadata       String?  @default("{}")
+  metadata       Json?    @default("{}")
   points         Int      @default(0)
   streak         Int      @default(0)
   createdAt      DateTime @default(now())
@@ -131,7 +130,7 @@ model Course {
   ratingCount   Int      @default(0)
   coverColor    String   @default("emerald")
   coverIcon     String   @default("book-open")
-  tags          String?  @default("[]")
+  tags          Json?    @default("[]")
   status        String   @default("published") // draft | published | archived
   startDate     String?
   endDate       String?
@@ -245,8 +244,8 @@ model Question {
   quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
   type        String   @default("mcq") // mcq | true_false | fill_blank | essay
   text        String
-  options     String   @default("[]") // [{id, text}]
-  correctAnswer String? // ["a"] or "true" or "essay"
+  options     Json     @default("[]") // [{id, text}]
+  correctAnswer Json?   // ["a"] or "true" or "essay"
   explanation String?
   marks       Float    @default(1)
   order       Int      @default(0)
@@ -262,7 +261,7 @@ model QuizAttempt {
   enrollment   Enrollment @relation(fields: [enrollmentId], references: [id])
   userId       String
   user         User     @relation(fields: [userId], references: [id])
-  answers      String   @default("{}") // {questionId: answer}
+  answers      Json     @default("{}") // {questionId: answer}
   score        Float    @default(0)
   maxScore     Float    @default(0)
   percentage   Float    @default(0)
@@ -284,7 +283,7 @@ model ForumThread {
   user        User     @relation(fields: [userId], references: [id])
   title       String
   body        String
-  tags        String?  @default("[]")
+  tags        Json?    @default("[]")
   views       Int      @default(0)
   isPinned    Boolean  @default(false)
   isResolved  Boolean  @default(false)
@@ -342,7 +341,7 @@ model Badge {
   description String
   icon        String   @default("award")
   color       String   @default("amber")
-  criteria    String   // {type, threshold}
+  criteria    Json     // {type, threshold}
   issuer      String   @default("Jabatan Tenaga Manusia")
   createdAt   DateTime @default(now())
 
@@ -356,7 +355,7 @@ model UserBadge {
   badgeId   String
   badge     Badge    @relation(fields: [badgeId], references: [id])
   awardedAt DateTime @default(now())
-  evidence  String? 
+  evidence  Json? 
 
   @@unique([userId, badgeId])
 }
@@ -398,7 +397,7 @@ model UserCompetency {
   competency    Competency @relation(fields: [competencyId], references: [id])
   status        String   @default("in_progress") // not_started | in_progress | achieved | expired
   achievedAt    DateTime?
-  evidence      String? 
+  evidence      Json? 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -429,7 +428,7 @@ model AuditLog {
   action    String // e.g. "user.login", "course.publish", "certificate.issue"
   entity    String?
   entityId  String?
-  details   String?  @default("{}")
+  details   Json?    @default("{}")
   ip        String?
   createdAt DateTime @default(now())
 }
@@ -443,7 +442,7 @@ model AIConversation {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   courseId   String?
   title     String?
-  messages  String   @default("[]") // [{role, content, ts}]
+  messages  Json     @default("[]") // [{role, content, ts}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

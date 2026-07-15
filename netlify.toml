@@ -1,0 +1,45 @@
+# =============================================================================
+# elearning JTM — Netlify Deployment Configuration
+# =============================================================================
+# This file tells Netlify how to build and deploy the Next.js app.
+# The @netlify/plugin-nextjs is auto-installed by Netlify when it detects
+# Next.js — it handles SSR (On-Demand Builders) + API routes (Functions).
+# =============================================================================
+
+[build]
+  # Standard Next.js build (no standalone — the plugin handles output).
+  command = "npm run build"
+  # The Next.js plugin reads from .next
+  publish = ".next"
+
+[build.environment]
+  # Node version (Next.js 16 requires Node 18+)
+  NODE_VERSION = "20"
+  # Next.js cache
+  NEXT_TELEMETRY_DISABLED = "1"
+
+# -----------------------------------------------------------------------------
+# Next.js plugin — auto-detected, but declaring it explicitly ensures the
+# latest version is used and SSR/Functions work out of the box.
+# -----------------------------------------------------------------------------
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# -----------------------------------------------------------------------------
+# Security headers
+# -----------------------------------------------------------------------------
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# -----------------------------------------------------------------------------
+# SPA-style fallback (in case the plugin doesn't catch a route)
+# -----------------------------------------------------------------------------
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

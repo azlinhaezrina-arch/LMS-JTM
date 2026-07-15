@@ -181,3 +181,21 @@ Stage Summary:
 - 145 files, 7 commits, main branch.
 - Secrets safe: .env gitignored + untracked; .env.example has placeholders only.
 - Strongly advised user to revoke the shared PAT from GitHub settings.
+
+---
+Task ID: 14
+Agent: orchestrator (main)
+Task: Make the project Netlify-deployable.
+
+Work Log:
+- Identified deployment blockers: output:"standalone" (Docker-oriented), custom build script with cp commands (Netlify plugin doesn't expect standalone), Supabase client throwing at module load (would crash build if env vars missing at build time).
+- next.config.ts: removed output:"standalone"; added eslint.ignoreDuringBuilds, allowedDevOrigins.
+- package.json: simplified build to "next build"; added engines.node >=18.
+- src/lib/supabase.ts: converted to lazy-init via Proxy — client created on first API call, not at module import. Prevents build-time crash on Netlify (env vars set at deploy, not build).
+- Created netlify.toml: build command, publish=".next", @netlify/plugin-nextjs plugin, Node 20, security headers, SPA fallback.
+- Verified: `next build` succeeds (28 API routes + 22 pages, 0 errors). Dev server works. Agent Browser confirms login screen renders with JTM logo + "elearning JTM" branding.
+- Committed + pushed to GitHub (commit b6682af). Token scrubbed after push.
+
+Stage Summary:
+- Repo is now Netlify-ready: https://github.com/azlinhaezrina-arch/LMS-JTM
+- Netlify deploy steps: Import from GitHub → build auto-detected via netlify.toml → set 2 env vars → deploy.

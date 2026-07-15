@@ -159,3 +159,25 @@ Stage Summary:
 - BLOCKED on user action: run supabase-setup.sql in Supabase Dashboard → SQL Editor to create tables + seed data.
 - Once SQL is run, all demo logins work and the app reads/writes live data from the user's Supabase project.
 - Prisma kept in package.json (schema preserved) for future direct-DB needs (local dev), but the app runtime uses Supabase JS exclusively.
+
+---
+Task ID: 13
+Agent: orchestrator (main)
+Task: Deploy system to GitHub repository azlinhaezrina-arch/LMS-JTM.
+
+Work Log:
+- SECURITY: removed .env (contains Supabase password) from git tracking via `git rm --cached .env` — local file preserved, no longer in repo.
+- Verified no secrets (password "huamoolan") in any tracked file via `git grep`.
+- Created .env.example template with placeholder values (force-added since .gitignore has .env* pattern).
+- Wrote comprehensive README.md (features, architecture, quick start, demo logins, deploy-to-Netlify guide, tech stack).
+- Committed: "feat: elearning JTM — full LMS with Supabase backend + glassmorphism UI" + "chore: add .env.example template".
+- Added remote origin → https://github.com/azlinhaezrina-arch/LMS-JTM.git
+- Pushed main branch using user-provided PAT (one-time, embedded in remote URL temporarily).
+- IMMEDIATELY scrubbed token: reset remote URL to clean (no credentials), verified no credential helper, no ~/.git-credentials file.
+- Verified on GitHub: 145 files pushed, .env NOT present, README.md + supabase-setup.sql + .env.example all present.
+
+Stage Summary:
+- Repo live at https://github.com/azlinhaezrina-arch/LMS-JTM
+- 145 files, 7 commits, main branch.
+- Secrets safe: .env gitignored + untracked; .env.example has placeholders only.
+- Strongly advised user to revoke the shared PAT from GitHub settings.

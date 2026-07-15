@@ -50,11 +50,11 @@ export function LoginScreen() {
       {/* Top bar */}
       <header className="px-4 sm:px-8 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg glow-emerald">
-            <GraduationCap className="w-6 h-6 text-white" />
+          <div className="w-11 h-11 rounded-xl bg-white/95 flex items-center justify-center shadow-lg ring-1 ring-emerald-500/30 overflow-hidden shrink-0">
+            <img src="/logo-jtm.jpeg" alt="Logo JTM" className="w-full h-full object-contain p-0.5" />
           </div>
           <div>
-            <div className="font-bold text-lg leading-tight text-gradient">LMS JTM</div>
+            <div className="font-bold text-lg leading-tight text-gradient">elearning JTM</div>
             <div className="text-[11px] text-muted-foreground leading-tight">{tr('orgShort', lang)} · TVET Malaysia</div>
           </div>
         </div>

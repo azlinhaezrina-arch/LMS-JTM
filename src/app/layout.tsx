@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LMS JTM — Sistem Pengurusan Pembelajaran | Jabatan Tenaga Manusia",
+  title: "elearning JTM — Sistem Pengurusan Pembelajaran | Jabatan Tenaga Manusia",
   description:
     "Platform pembelajaran digital bersepadu untuk 33 kampus ADTEC di bawah Jabatan Tenaga Manusia (JTM) Malaysia. Latihan TVET yang berkualiti, konsisten dan boleh disahkan.",
   keywords: [
@@ -24,9 +24,9 @@ export const metadata: Metadata = {
     "Pembelajaran Digital", "Sijil Digital", "SKM", "NOSS", "Malaysia",
   ],
   authors: [{ name: "Jabatan Tenaga Manusia (JTM) Malaysia" }],
-  icons: { icon: "/logo.svg" },
+  icons: { icon: "/logo-jtm.jpeg" },
   openGraph: {
-    title: "LMS JTM — Sistem Pengurusan Pembelajaran",
+    title: "elearning JTM — Sistem Pengurusan Pembelajaran",
     description: "Platform pembelajaran digital bersepadu untuk 33 kampus ADTEC, JTM Malaysia.",
     type: "website",
   },

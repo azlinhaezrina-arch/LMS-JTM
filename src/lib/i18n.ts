@@ -3,7 +3,7 @@ export type Lang = 'ms' | 'en'
 
 export const t = {
   // Brand
-  brand: { ms: 'LMS JTM', en: 'JTM LMS' },
+  brand: { ms: 'elearning JTM', en: 'elearning JTM' },
   brandFull: { ms: 'Sistem Pengurusan Pembelajaran', en: 'Learning Management System' },
   org: { ms: 'Jabatan Tenaga Manusia', en: 'Department of Manpower' },
   orgShort: { ms: 'JTM Malaysia', en: 'JTM Malaysia' },

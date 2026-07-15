@@ -90,3 +90,29 @@ Stage Summary:
 - Glassmorphism UI throughout (aurora gradient bg, frosted glass, emerald/teal/amber palette — no blue/indigo).
 - Supabase-architecture backend (UUIDs, multi-tenant, RLS-style scoping, auth metadata) on SQLite via Prisma.
 - Netlify-ready (standalone Next.js build, serverless-friendly API routes, httpOnly cookie sessions).
+
+---
+Task ID: 10
+Agent: orchestrator (main)
+Task: Replace logo with attached JTM logo image and rename "LMS JTM" → "elearning JTM".
+
+Work Log:
+- Copied uploaded `upload/Logo JTM.jpeg` (292×214 JPEG) to `public/logo-jtm.jpeg`.
+- Replaced the gradient GraduationCap icon with the JTM logo image in 4 positions (all retaining original size/position):
+  • Login screen header (w-11 h-11)
+  • App sidebar brand (w-10 h-10)
+  • Page loader (w-16 h-16)
+  • App footer mini-logo (w-5 h-5)
+  • Favicon (layout.tsx icons.icon → /logo-jtm.jpeg)
+- Renamed "LMS JTM" → "elearning JTM" in 8 locations:
+  • layout.tsx (page title + OpenGraph title)
+  • app-shell.tsx (sidebar brand)
+  • login-screen.tsx (header brand)
+  • page.tsx (loader text)
+  • i18n.ts (brand key, both ms/en)
+  • api/ai-assistant/route.ts (comment + system prompt, 2 spots)
+- Logo containers use bg-white/95 + ring-emerald-500/30 so the JTM crest sits cleanly on the glassmorphism surface; `object-contain` preserves aspect ratio.
+
+Stage Summary:
+- Agent Browser verified: page title now "elearning JTM — Sistem Pengurusan Pembelajaran"; login screen + in-app sidebar + footer all show the JTM logo image and "elearning JTM" text; no console/runtime errors.
+- Lint clean (0 errors).

@@ -103,11 +103,11 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         {/* Brand */}
         <div className="px-5 py-5 flex items-center justify-between border-b border-white/10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg glow-emerald">
-              <GraduationCap className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-white/95 flex items-center justify-center shadow-lg ring-1 ring-emerald-500/30 overflow-hidden shrink-0">
+              <img src="/logo-jtm.jpeg" alt="Logo JTM" className="w-full h-full object-contain p-0.5" />
             </div>
             <div>
-              <div className="font-bold text-base leading-tight text-gradient">LMS JTM</div>
+              <div className="font-bold text-base leading-tight text-gradient">elearning JTM</div>
               <div className="text-[10px] text-muted-foreground leading-tight">{tr('orgShort', lang)}</div>
             </div>
           </div>
@@ -290,8 +290,8 @@ function Footer() {
     <footer className="mt-auto glass border-t border-white/10 px-4 sm:px-6 lg:px-8 py-4">
       <div className="max-w-[1600px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-            <GraduationCap className="w-3 h-3 text-white" />
+          <div className="w-5 h-5 rounded bg-white/95 flex items-center justify-center overflow-hidden ring-1 ring-emerald-500/30 shrink-0">
+            <img src="/logo-jtm.jpeg" alt="JTM" className="w-full h-full object-contain" />
           </div>
           <span>© 2026 {tr('org', lang)} · {tr('footerNote', lang)}</span>
         </div>

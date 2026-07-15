@@ -27,13 +27,13 @@ export default function Home() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <div className="relative">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-2xl glow-emerald animate-float">
-            <GraduationCap className="w-8 h-8 text-white" />
+          <div className="w-16 h-16 rounded-2xl bg-white/95 flex items-center justify-center shadow-2xl ring-1 ring-emerald-500/30 overflow-hidden animate-float">
+            <img src="/logo-jtm.jpeg" alt="Logo JTM" className="w-full h-full object-contain p-1" />
           </div>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Memuatkan LMS JTM...</span>
+          <span className="text-sm">Memuatkan elearning JTM...</span>
         </div>
       </div>
     )

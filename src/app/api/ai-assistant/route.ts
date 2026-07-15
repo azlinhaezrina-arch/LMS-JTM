@@ -5,7 +5,7 @@ import { ok, fail, parseBody, parseJson } from '@/lib/api'
 import type { AIMessage } from '@/lib/types'
 
 /**
- * AI Learning Assistant — LMS JTM
+ * AI Learning Assistant — elearning JTM
  * Powered by GLM via z-ai-web-dev-sdk.
  * Context-aware: knows the learner's role, campus, active courses & competencies.
  * Responds in Bahasa Malaysia by default (respects preferredLang).
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   }
 
   const lang = user.preferredLang === 'en' ? 'English' : 'Bahasa Malaysia'
-  const systemPrompt = `Anda adalah "Cikgu AI", pembantu pembelajaran maya untuk LMS JTM (Jabatan Tenaga Manusia Malaysia) — platform latihan TVET untuk 33 kampus ADTEC.
+  const systemPrompt = `Anda adalah "Cikgu AI", pembantu pembelajaran maya untuk elearning JTM (Jabatan Tenaga Manusia Malaysia) — platform latihan TVET untuk 33 kampus ADTEC.
 
 Identiti pengguna semasa:
 - Nama: ${user.name}

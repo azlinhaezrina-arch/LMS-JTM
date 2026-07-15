@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
-import { getCurrentUser, tenantScope } from '@/lib/session'
-import { ok, parseJson } from '@/lib/api'
+import { supabase, T } from '@/lib/supabase'
+import { getCurrentUser } from '@/lib/session'
+import { ok } from '@/lib/api'
 
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser()
@@ -13,51 +13,42 @@ export async function GET(req: NextRequest) {
   const format = searchParams.get('format')
   const limit = Math.min(parseInt(searchParams.get('limit') || '50', 10), 100)
 
-  const where: Record<string, unknown> = { status: 'published' }
-  if (search) {
-    where.OR = [
-      { title: { contains: search } },
-      { code: { contains: search } },
-      { description: { contains: search } },
-    ]
-  }
-  if (categoryId) where.categoryId = categoryId
-  if (level) where.level = level
-  if (format) where.format = format
-  // Tenant scoping: non-super-admins see their campus + published courses only
-  if (user && user.role !== 'super_admin' && user.role !== 'auditor' && !campusId) {
-    where.OR = [{ campusId: user.campusId }, { format: { in: ['online', 'blended'] } }]
-  }
-  if (campusId) where.campusId = campusId
+  let query = supabase
+    .from(T.Course)
+    .select('*, category:CourseCategory(*), campus:Campus(*), instructor:User!instructorId(id,name,"avatarUrl"), competencies:CourseCompetency(competency:Competency(*))')
+    .eq('status', 'published')
+    .order('enrolledCount', { ascending: false })
+    .limit(limit)
 
-  const courses = await db.course.findMany({
-    where,
-    include: {
-      category: true,
-      campus: true,
-      instructor: { select: { id: true, name: true, avatarUrl: true } },
-      competencies: { include: { competency: true } },
-    },
-    orderBy: { enrolledCount: 'desc' },
-    take: limit,
-  })
+  if (search) query = query.or(`title.ilike.%${search}%,code.ilike.%${search}%,description.ilike.%${search}%`)
+  if (categoryId) query = query.eq('categoryId', categoryId)
+  if (level) query = query.eq('level', level)
+  if (format) query = query.eq('format', format)
+  if (campusId) query = query.eq('campusId', campusId)
+  else if (user && user.role !== 'super_admin' && user.role !== 'auditor') {
+    // Non-super-admins: own campus + online/blended
+    query = query.or(`campusId.eq.${user.campusId},format.in.(online,blended)`)
+  }
 
-  // If logged in, attach enrollment status
+  const { data: courses, error } = await query
+  if (error) return ok({ courses: [] })
+
+  // Attach enrollment status if logged in
   let enrollments: Record<string, { status: string; progressPct: number }> = {}
   if (user) {
-    const enr = await db.enrollment.findMany({
-      where: { userId: user.id },
-      select: { courseId: true, status: true, progressPct: true },
-    })
-    enrollments = Object.fromEntries(enr.map((e) => [e.courseId, { status: e.status, progressPct: e.progressPct }]))
+    const { data: enr } = await supabase
+      .from(T.Enrollment)
+      .select('courseId,status,progressPct')
+      .eq('userId', user.id)
+    if (enr) enrollments = Object.fromEntries(enr.map((e: any) => [e.courseId, { status: e.status, progressPct: e.progressPct }]))
   }
 
-  return ok({
-    courses: courses.map((c) => ({
-      ...c,
-      tags: parseJson(c.tags, []),
-      competencies: c.competencies.map((cc) => cc.competency),
-      enrollment: enrollments[c.id] ?? null,
-    })),
-  })
+  const result = (courses || []).map((c: any) => ({
+    ...c,
+    tags: c.tags || [],
+    competencies: (c.competencies || []).map((cc: any) => cc.competency),
+    enrollment: enrollments[c.id] ?? null,
+  }))
+
+  return ok({ courses: result })
 }

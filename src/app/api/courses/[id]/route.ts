@@ -1,53 +1,59 @@
-import { db } from '@/lib/db'
-import { getCurrentUser, requireUser } from '@/lib/session'
-import { ok, fail, parseJson } from '@/lib/api'
+import { supabase, T } from '@/lib/supabase'
+import { getCurrentUser } from '@/lib/session'
+import { ok, fail } from '@/lib/api'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const course = await db.course.findUnique({
-    where: { id },
-    include: {
-      category: true,
-      campus: true,
-      instructor: { select: { id: true, name: true, avatarUrl: true, email: true } },
-      modules: {
-        orderBy: { order: 'asc' },
-        include: { contents: { orderBy: { createdAt: 'asc' } } },
-      },
-      quizzes: true,
-      competencies: { include: { competency: true } },
-      enrollments: { select: { id: true, userId: true, status: true, progressPct: true } },
-    },
-  })
-  if (!course) return fail('Kursus tidak dijumpai', 404)
+  const { data: course, error } = await supabase
+    .from(T.Course)
+    .select('*, category:CourseCategory(*), campus:Campus(*), instructor:User!instructorId(id,name,"avatarUrl",email), modules:Module(*), quizzes:Quiz(*), competencies:CourseCompetency(competency:Competency(*))')
+    .eq('id', id)
+    .single()
+  if (error || !course) return fail('Kursus tidak dijumpai', 404)
 
-  const user = await getCurrentUser()
-  let myEnrollment = null
-  let progressMap: Record<string, { status: string; timeSpentSec: number; score: number | null }> = {}
-  if (user) {
-    myEnrollment = await db.enrollment.findFirst({
-      where: { userId: user.id, courseId: id },
-      include: { progress: true },
-    })
-    if (myEnrollment) {
-      progressMap = Object.fromEntries(
-        myEnrollment.progress.map((p) => [p.contentId, { status: p.status, timeSpentSec: p.timeSpentSec, score: p.score }])
-      )
+  // Fetch contents for each module
+  const moduleIds = (course.modules || []).map((m: any) => m.id)
+  let contentsByModule: Record<string, any[]> = {}
+  if (moduleIds.length) {
+    const { data: contents } = await supabase
+      .from(T.Content)
+      .select('*')
+      .in('moduleId', moduleIds)
+      .order('createdAt', { ascending: true })
+    for (const c of contents || []) {
+      if (!contentsByModule[c.moduleId]) contentsByModule[c.moduleId] = []
+      contentsByModule[c.moduleId].push(c)
     }
   }
 
-  return ok({
-    course: {
-      ...course,
-      tags: parseJson(course.tags, []),
-      competencies: course.competencies.map((cc) => cc.competency),
-      modules: course.modules.map((m) => ({
+  const user = await getCurrentUser()
+  let myEnrollment: any = null
+  let progressMap: Record<string, { status: string; timeSpentSec: number; score: number | null }> = {}
+  if (user) {
+    const { data: enr } = await supabase
+      .from(T.Enrollment)
+      .select('*, progress:Progress(*)')
+      .eq('userId', user.id)
+      .eq('courseId', id)
+      .single()
+    if (enr) {
+      myEnrollment = { id: enr.id, status: enr.status, progressPct: enr.progressPct, finalScore: enr.finalScore }
+      progressMap = Object.fromEntries((enr.progress || []).map((p: any) => [p.contentId, { status: p.status, timeSpentSec: p.timeSpentSec, score: p.score }]))
+    }
+  }
+
+  const result = {
+    ...course,
+    tags: course.tags || [],
+    competencies: (course.competencies || []).map((cc: any) => cc.competency),
+    modules: (course.modules || [])
+      .sort((a: any, b: any) => a.order - b.order)
+      .map((m: any) => ({
         ...m,
-        contents: m.contents.map((c) => ({ ...c, progress: progressMap[c.id] ?? null })),
+        contents: (contentsByModule[m.id] || []).map((c) => ({ ...c, progress: progressMap[c.id] ?? null })),
       })),
-      myEnrollment: myEnrollment
-        ? { id: myEnrollment.id, status: myEnrollment.status, progressPct: myEnrollment.progressPct, finalScore: myEnrollment.finalScore }
-        : null,
-    },
-  })
+    myEnrollment,
+  }
+
+  return ok({ course: result })
 }

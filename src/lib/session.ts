@@ -1,12 +1,12 @@
 import { cookies } from 'next/headers'
-import { db } from './db'
-import type { User, Campus } from '@prisma/client'
+import { supabase, T } from './supabase'
+import type { SessionUser, Role, Campus } from './types'
 
 /**
  * Simulated SSO session (MyDigital ID analogue).
  * Stores userId in an httpOnly cookie. On each request we hydrate the user
- * from the database — this mirrors Supabase's `auth.getUser()` pattern and
- * works on Netlify (stateless, serverless).
+ * from Supabase (PostgREST over HTTPS) — works in serverless/sandboxed
+ * environments where raw Postgres (port 5432) is blocked.
  */
 
 const SESSION_COOKIE = 'jtm_lms_session'
@@ -31,16 +31,17 @@ export async function getSessionUserId(): Promise<string | null> {
   return store.get(SESSION_COOKIE)?.value ?? null
 }
 
-export type SessionUser = User & { campus: Campus | null }
-
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const id = await getSessionUserId()
   if (!id) return null
-  const user = await db.user.findUnique({
-    where: { id },
-    include: { campus: true },
-  })
-  return user
+  const { data, error } = await supabase
+    .from(T.User)
+    .select('*, campus(*)')
+    .eq('id', id)
+    .single()
+  if (error || !data) return null
+  // Coerce to SessionUser shape (Supabase returns snake_case-matching column names; our cols are camelCase-quoted so it's fine)
+  return data as unknown as SessionUser
 }
 
 export async function requireUser(): Promise<SessionUser> {
@@ -48,8 +49,6 @@ export async function requireUser(): Promise<SessionUser> {
   if (!user) throw new Error('UNAUTHORIZED')
   return user
 }
-
-export type Role = 'super_admin' | 'admin_kampus' | 'pengajar' | 'pelajar' | 'auditor'
 
 export function hasRole(user: SessionUser, ...roles: Role[]): boolean {
   return roles.includes(user.role as Role)
@@ -60,7 +59,18 @@ export function hasRole(user: SessionUser, ...roles: Role[]): boolean {
  * - super_admin / auditor → see all campuses (no filter)
  * - other roles → scoped to their own campus
  */
-export function tenantScope(user: SessionUser) {
+export function tenantScope(user: SessionUser): Record<string, unknown> {
   if (user.role === 'super_admin' || user.role === 'auditor') return {}
   return { campusId: user.campusId ?? '__none__' }
 }
+
+/** Apply tenantScope to a Supabase query builder (filters on campusId). */
+export function applyTenant<T>(
+  query: { eq: (col: string, val: unknown) => T },
+  user: SessionUser,
+): T {
+  if (user.role === 'super_admin' || user.role === 'auditor') return undefined as unknown as T
+  return query.eq('campusId', user.campusId ?? '__none__')
+}
+
+export type { Campus }

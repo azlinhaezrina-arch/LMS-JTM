@@ -1,30 +1,27 @@
 import { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
+import { supabase, T } from '@/lib/supabase'
 import { requireUser } from '@/lib/session'
-import { ok, parseJson } from '@/lib/api'
+import { ok } from '@/lib/api'
 
 export async function GET(req: NextRequest) {
   const user = await requireUser()
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
 
-  const where: Record<string, unknown> = { userId: user.id }
-  if (status) where.status = status
+  let query = supabase
+    .from(T.Enrollment)
+    .select('*, course:Course(*, campus:Campus(*), category:CourseCategory(*), instructor:User!instructorId(id,name,"avatarUrl"))')
+    .eq('userId', user.id)
+    .order('enrolledAt', { ascending: false })
+  if (status) query = query.eq('status', status)
 
-  const enrollments = await db.enrollment.findMany({
-    where,
-    include: {
-      course: {
-        include: { campus: true, category: true, instructor: { select: { id: true, name: true, avatarUrl: true } } },
-      },
-    },
-    orderBy: { enrolledAt: 'desc' },
-  })
+  const { data, error } = await query
+  if (error) return ok({ enrollments: [] })
 
-  return ok({
-    enrollments: enrollments.map((e) => ({
-      ...e,
-      course: { ...e.course, tags: parseJson(e.course.tags, []) },
-    })),
-  })
+  const result = (data || []).map((e: any) => ({
+    ...e,
+    course: { ...e.course, tags: e.course?.tags || [] },
+  }))
+
+  return ok({ enrollments: result })
 }

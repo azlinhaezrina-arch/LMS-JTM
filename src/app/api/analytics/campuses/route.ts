@@ -1,4 +1,4 @@
-import { db } from '@/lib/db'
+import { supabase, T } from '@/lib/supabase'
 import { requireUser } from '@/lib/session'
 import { ok, fail } from '@/lib/api'
 
@@ -7,27 +7,31 @@ export async function GET() {
   const user = await requireUser()
   if (user.role !== 'super_admin' && user.role !== 'auditor') return fail('Akses ditolak', 403)
 
-  const campuses = await db.campus.findMany({
-    where: { code: { not: 'JTM-HQ' } },
-    orderBy: [{ region: 'asc' }, { name: 'asc' }],
-  })
+  const { data: campuses, error } = await supabase
+    .from(T.Campus)
+    .select('id, code, name, region, state')
+    .neq('code', 'JTM-HQ')
+    .order('region', { ascending: true })
+    .order('name', { ascending: true })
+  if (error) return ok({ campuses: [] })
 
   const rows = await Promise.all(
-    campuses.map(async (c) => {
+    (campuses || []).map(async (c: any) => {
       const [users, courses, enrollments, completed, certs, pengajar, pelajar] = await Promise.all([
-        db.user.count({ where: { campusId: c.id } }),
-        db.course.count({ where: { campusId: c.id, status: 'published' } }),
-        db.enrollment.count({ where: { campusId: c.id } }),
-        db.enrollment.count({ where: { campusId: c.id, status: 'completed' } }),
-        db.certificate.count({ where: { campusId: c.id } }),
-        db.user.count({ where: { campusId: c.id, role: 'pengajar' } }),
-        db.user.count({ where: { campusId: c.id, role: 'pelajar' } }),
+        supabase.from(T.User).select('id', { count: 'exact', head: true }).eq('campusId', c.id),
+        supabase.from(T.Course).select('id', { count: 'exact', head: true }).eq('campusId', c.id).eq('status', 'published'),
+        supabase.from(T.Enrollment).select('id', { count: 'exact', head: true }).eq('campusId', c.id),
+        supabase.from(T.Enrollment).select('id', { count: 'exact', head: true }).eq('campusId', c.id).eq('status', 'completed'),
+        supabase.from(T.Certificate).select('id', { count: 'exact', head: true }).eq('campusId', c.id),
+        supabase.from(T.User).select('id', { count: 'exact', head: true }).eq('campusId', c.id).eq('role', 'pengajar'),
+        supabase.from(T.User).select('id', { count: 'exact', head: true }).eq('campusId', c.id).eq('role', 'pelajar'),
       ])
       return {
         id: c.id, code: c.code, name: c.name, region: c.region, state: c.state,
-        users, pengajar, pelajar, courses, enrollments, completed,
-        completionRate: enrollments > 0 ? Math.round((completed / enrollments) * 100) : 0,
-        certificates: certs,
+        users: users.count || 0, pengajar: pengajar.count || 0, pelajar: pelajar.count || 0,
+        courses: courses.count || 0, enrollments: enrollments.count || 0, completed: completed.count || 0,
+        completionRate: (enrollments.count || 0) > 0 ? Math.round(((completed.count || 0) / enrollments.count!) * 100) : 0,
+        certificates: certs.count || 0,
       }
     })
   )

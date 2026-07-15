@@ -1,17 +1,19 @@
-import { db } from '@/lib/db'
+import { supabase, T } from '@/lib/supabase'
 import { requireUser } from '@/lib/session'
-import { ok, parseJson } from '@/lib/api'
+import { ok } from '@/lib/api'
 
 export async function GET() {
   const user = await requireUser()
-  const badges = await db.badge.findMany({ orderBy: { createdAt: 'asc' } })
-  const earned = await db.userBadge.findMany({ where: { userId: user.id } })
-  const earnedMap = new Map(earned.map((e) => [e.badgeId, e]))
+  const [{ data: badges }, { data: earned }] = await Promise.all([
+    supabase.from(T.Badge).select('*').order('createdAt', { ascending: true }),
+    supabase.from(T.UserBadge).select('id, badgeId, awardedAt').eq('userId', user.id),
+  ])
+  const earnedMap = new Map((earned || []).map((e: any) => [e.badgeId, e]))
 
   return ok({
-    badges: badges.map((b) => ({
+    badges: (badges || []).map((b: any) => ({
       ...b,
-      criteria: parseJson(b.criteria, {}),
+      criteria: b.criteria || {},
       earned: earnedMap.has(b.id),
       awardedAt: earnedMap.get(b.id)?.awardedAt ?? null,
     })),

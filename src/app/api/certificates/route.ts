@@ -1,16 +1,15 @@
-import { db } from '@/lib/db'
+import { supabase, T } from '@/lib/supabase'
 import { requireUser } from '@/lib/session'
 import { ok } from '@/lib/api'
 
 export async function GET() {
   const user = await requireUser()
-  const certs = await db.certificate.findMany({
-    where: { userId: user.id, status: 'valid' },
-    include: {
-      course: { select: { id: true, title: true, code: true } },
-      campus: { select: { id: true, name: true, code: true } },
-    },
-    orderBy: { issuedAt: 'desc' },
-  })
-  return ok({ certificates: certs })
+  const { data, error } = await supabase
+    .from(T.Certificate)
+    .select('*, course:Course(id,title,code), campus:Campus(id,name,code)')
+    .eq('userId', user.id)
+    .eq('status', 'valid')
+    .order('issuedAt', { ascending: false })
+  if (error) return ok({ certificates: [] })
+  return ok({ certificates: data || [] })
 }

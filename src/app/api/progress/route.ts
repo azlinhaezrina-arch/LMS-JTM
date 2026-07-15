@@ -1,4 +1,4 @@
-import { db } from '@/lib/db'
+import { supabase, T } from '@/lib/supabase'
 import { requireUser } from '@/lib/session'
 import { ok, fail, parseBody } from '@/lib/api'
 
@@ -9,49 +9,61 @@ export async function POST(req: Request) {
     enrollmentId: string; contentId: string; status: string; timeSpentSec?: number; score?: number
   }>(req)
 
-  const enr = await db.enrollment.findUnique({ where: { id: enrollmentId } })
-  if (!enr || enr.userId !== user.id) return fail('Pendaftaran tidak sah', 403)
+  const { data: enr, error: enrErr } = await supabase
+    .from(T.Enrollment)
+    .select('id, userId, courseId')
+    .eq('id', enrollmentId)
+    .single()
+  if (enrErr || !enr || enr.userId !== user.id) return fail('Pendaftaran tidak sah', 403)
 
-  const existing = await db.progress.findUnique({ where: { enrollmentId_contentId: { enrollmentId, contentId } } })
+  const update: Record<string, unknown> = { status }
+  if (timeSpentSec !== undefined) update.timeSpentSec = timeSpentSec
+  if (score !== undefined) update.score = score
+  if (status === 'completed') update.completedAt = new Date().toISOString()
 
-  const data: Record<string, unknown> = { status }
-  if (timeSpentSec !== undefined) data.timeSpentSec = timeSpentSec
-  if (score !== undefined) data.score = score
-  if (status === 'completed') data.completedAt = new Date()
+  // Upsert progress
+  const { data: existing } = await supabase
+    .from(T.Progress)
+    .select('id')
+    .eq('enrollmentId', enrollmentId)
+    .eq('contentId', contentId)
+    .maybeSingle()
 
   let progress
   if (existing) {
-    progress = await db.progress.update({ where: { id: existing.id }, data })
+    const { data } = await supabase.from(T.Progress).update(update).eq('id', existing.id).select().single()
+    progress = data
   } else {
-    progress = await db.progress.create({
-      data: { enrollmentId, contentId, userId: user.id, ...data } as never,
-    })
+    const { data } = await supabase.from(T.Progress).insert({
+      id: crypto.randomUUID(), enrollmentId, contentId, userId: user.id, ...update,
+    }).select().single()
+    progress = data
   }
 
-  // Recompute enrollment progress percentage
-  const course = await db.course.findUnique({
-    where: { id: enr.courseId },
-    include: { modules: { include: { contents: true } } },
-  })
+  // Recompute enrollment progress %
+  const { data: course } = await supabase
+    .from(T.Course)
+    .select('id, modules:Module(id, contents:Content(id))')
+    .eq('id', enr.courseId)
+    .single()
   if (course) {
-    const allContents = course.modules.flatMap((m) => m.contents)
+    const allContents = (course.modules || []).flatMap((m: any) => m.contents || [])
     const total = allContents.length || 1
-    const completed = await db.progress.count({
-      where: { enrollmentId, status: 'completed' },
-    })
+    const { count } = await supabase
+      .from(T.Progress)
+      .select('id', { count: 'exact', head: true })
+      .eq('enrollmentId', enrollmentId)
+      .eq('status', 'completed')
+    const completed = count || 0
     const pct = Math.round((completed / total) * 100)
-    await db.enrollment.update({
-      where: { id: enrollmentId },
-      data: {
-        progressPct: pct,
-        status: pct === 100 ? 'completed' : 'active',
-        completedAt: pct === 100 ? new Date() : null,
-      },
-    })
+    await supabase.from(T.Enrollment).update({
+      progressPct: pct,
+      status: pct === 100 ? 'completed' : 'active',
+      completedAt: pct === 100 ? new Date().toISOString() : null,
+    }).eq('id', enrollmentId)
 
-    // Award points for completion
-    if (status === 'completed' && (!existing || existing.status !== 'completed')) {
-      await db.user.update({ where: { id: user.id }, data: { points: { increment: 25 } } })
+    if (status === 'completed' && (!existing)) {
+      await supabase.from(T.User).update({ points: (user.points || 0) + 25 }).eq('id', user.id)
     }
   }
 

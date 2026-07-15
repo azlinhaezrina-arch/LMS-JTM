@@ -1,25 +1,23 @@
-import { db } from '@/lib/db'
+import { supabase, T } from '@/lib/supabase'
 import { requireUser } from '@/lib/session'
-import { ok, fail, parseJson } from '@/lib/api'
+import { ok, fail } from '@/lib/api'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser()
+  await requireUser()
   const { id } = await params
 
-  const thread = await db.forumThread.findUnique({
-    where: { id },
-    include: {
-      user: { select: { id: true, name: true, role: true, avatarUrl: true } },
-      course: { select: { id: true, title: true, code: true } },
-      posts: {
-        include: { user: { select: { id: true, name: true, role: true, avatarUrl: true } } },
-        orderBy: { createdAt: 'asc' },
-      },
-    },
-  })
-  if (!thread) return fail('Thread tidak dijumpai', 404)
+  const { data: thread, error } = await supabase
+    .from(T.ForumThread)
+    .select('*, user:User(id,name,role,"avatarUrl"), course:Course(id,title,code), posts:ForumPost(*, user:User(id,name,role,"avatarUrl"))')
+    .eq('id', id)
+    .single()
+  if (error || !thread) return fail('Thread tidak dijumpai', 404)
 
-  await db.forumThread.update({ where: { id }, data: { views: { increment: 1 } } })
+  // Increment views
+  await supabase.from(T.ForumThread).update({ views: (thread.views || 0) + 1 }).eq('id', id)
 
-  return ok({ thread: { ...thread, tags: parseJson(thread.tags, []) } })
+  // Sort posts oldest-first
+  thread.posts = (thread.posts || []).sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+  return ok({ thread: { ...thread, tags: thread.tags || [] } })
 }

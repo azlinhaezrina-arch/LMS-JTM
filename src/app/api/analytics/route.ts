@@ -1,6 +1,6 @@
-import { db } from '@/lib/db'
-import { requireUser, tenantScope } from '@/lib/session'
-import { ok, parseJson } from '@/lib/api'
+import { supabase, T } from '@/lib/supabase'
+import { requireUser } from '@/lib/session'
+import { ok } from '@/lib/api'
 
 const CAT_COLORS: Record<string, string> = {
   'Mekatronik': '#059669', 'Elektrik': '#d97706', 'IT & Multimedia': '#0d9488',
@@ -14,98 +14,115 @@ const STATUS_COLORS: Record<string, string> = {
 
 export async function GET() {
   const user = await requireUser()
-  const scope = tenantScope(user)
+  const isHQ = user.role === 'super_admin' || user.role === 'auditor'
+
+  // Build base filters
+  const campusFilter = isHQ ? null : user.campusId
+
+  // Counts — use head counts
+  const countWhere = (table: string, extra?: Record<string, unknown>) => {
+    let q = supabase.from(table).select('id', { count: 'exact', head: true })
+    if (campusFilter) q = q.eq('campusId', campusFilter)
+    if (extra) for (const [k, v] of Object.entries(extra)) q = q.eq(k, v as string)
+    return q
+  }
 
   const [users, courses, enrollments, certificates, campuses] = await Promise.all([
-    db.user.count({ where: scope }),
-    db.course.count({ where: { ...scope, status: 'published' } }),
-    db.enrollment.count({ where: scope }),
-    db.certificate.count({ where: scope }),
-    db.campus.count({ where: user.role === 'super_admin' || user.role === 'auditor' ? {} : { id: user.campusId ?? '__none__' } }),
+    countWhere(T.User),
+    countWhere(T.Course, { status: 'published' }),
+    countWhere(T.Enrollment),
+    countWhere(T.Certificate),
+    isHQ
+      ? supabase.from(T.Campus).select('id', { count: 'exact', head: true })
+      : Promise.resolve({ count: 1 }),
   ])
 
-  const completedEnrollments = await db.enrollment.count({ where: { ...scope, status: 'completed' } })
-  const completionRate = enrollments > 0 ? Math.round((completedEnrollments / enrollments) * 100) : 0
-  const avgScoreAgg = await db.certificate.aggregate({ _avg: { score: true }, where: scope })
-  const avgScore = avgScoreAgg._avg.score ? Math.round(avgScoreAgg._avg.score * 10) / 10 : 0
+  const completedEnrollments = await countWhere(T.Enrollment, { status: 'completed' })
+  const completionRate = (enrollments.count || 0) > 0 ? Math.round(((completedEnrollments.count || 0) / enrollments.count!) * 100) : 0
+
+  // Avg score from certificates
+  let avgScore = 0
+  const { data: certScores } = await supabase.from(T.Certificate).select('score')
+  if (campusFilter) {
+    // already filtered by campus via the query above? No — let's refilter
+    const { data: filtered } = await supabase.from(T.Certificate).select('score').eq('campusId', campusFilter)
+    if (filtered && filtered.length) avgScore = Math.round(filtered.reduce((s, c) => s + (c.score || 0), 0) / filtered.length * 10) / 10
+  } else if (certScores && certScores.length) {
+    avgScore = Math.round(certScores.reduce((s, c) => s + (c.score || 0), 0) / certScores.length * 10) / 10
+  }
 
   // Active learners (signed in within 7 days)
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000)
-  const activeLearners = await db.user.count({
-    where: { ...scope, lastSignInAt: { gte: sevenDaysAgo }, status: 'active' },
-  })
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString()
+  let activeLearnersQ = supabase.from(T.User).select('id', { count: 'exact', head: true }).eq('status', 'active').gte('lastSignInAt', sevenDaysAgo)
+  if (campusFilter) activeLearnersQ = activeLearnersQ.eq('campusId', campusFilter)
+  const { count: activeLearners } = await activeLearnersQ
 
   // Enrollments trend (last 8 weeks)
   const trend: { label: string; value: number }[] = []
   for (let i = 7; i >= 0; i--) {
     const start = new Date(Date.now() - i * 7 * 86400000)
     const end = new Date(Date.now() - (i - 1) * 7 * 86400000)
-    const count = await db.enrollment.count({
-      where: { ...scope, enrolledAt: { gte: start, lt: end } },
-    })
-    trend.push({ label: `M${-i + 8}`, value: count })
+    let q = supabase.from(T.Enrollment).select('id', { count: 'exact', head: true }).gte('enrolledAt', start.toISOString()).lt('enrolledAt', end.toISOString())
+    if (campusFilter) q = q.eq('campusId', campusFilter)
+    const { count } = await q
+    trend.push({ label: `M${-i + 8}`, value: count || 0 })
   }
 
-  // Completion by campus (cross-campus for super_admin, else just own)
-  const campusWhere = user.role === 'super_admin' || user.role === 'auditor' ? {} : { id: user.campusId ?? '__none__' }
-  const allCampuses = await db.campus.findMany({ where: campusWhere, orderBy: { region: 'asc' } })
+  // Completion by campus
+  const { data: allCampuses } = await supabase
+    .from(T.Campus)
+    .select('id, code, name, region')
+    .order('region', { ascending: true })
+  const visibleCampuses = isHQ ? allCampuses : (allCampuses || []).filter((c: any) => c.id === user.campusId)
   const completionByCampus = await Promise.all(
-    allCampuses.map(async (c) => {
-      const [enr, comp] = await Promise.all([
-        db.enrollment.count({ where: { campusId: c.id } }),
-        db.enrollment.count({ where: { campusId: c.id, status: 'completed' } }),
+    (visibleCampuses || []).map(async (c: any) => {
+      const [{ count: enr }, { count: comp }] = await Promise.all([
+        supabase.from(T.Enrollment).select('id', { count: 'exact', head: true }).eq('campusId', c.id),
+        supabase.from(T.Enrollment).select('id', { count: 'exact', head: true }).eq('campusId', c.id).eq('status', 'completed'),
       ])
       return {
         campus: c.name, code: c.code,
-        rate: enr > 0 ? Math.round((comp / enr) * 100) : 0,
-        enrolled: enr, completed: comp,
+        rate: (enr || 0) > 0 ? Math.round(((comp || 0) / enr!) * 100) : 0,
+        enrolled: enr || 0, completed: comp || 0,
       }
     })
   )
 
   // Category distribution
-  const catAgg = await db.course.groupBy({
-    by: ['categoryId'],
-    where: { ...scope, status: 'published' },
-    _count: { id: true },
-  })
-  const categories = await db.courseCategory.findMany()
-  const categoryDistribution = catAgg.map((g) => {
-    const cat = categories.find((c) => c.id === g.categoryId)
-    return { name: cat?.name ?? 'Lain', value: g._count.id, color: cat ? CAT_COLORS[cat.name] ?? '#0d9488' : '#0d9488' }
+  const { data: catAgg } = await supabase
+    .from(T.Course)
+    .select('categoryId')
+    .eq('status', 'published')
+  const catCounts: Record<string, number> = {}
+  for (const c of catAgg || []) {
+    if (c.categoryId) catCounts[c.categoryId] = (catCounts[c.categoryId] || 0) + 1
+  }
+  const { data: categories } = await supabase.from(T.CourseCategory).select('*')
+  const categoryDistribution = Object.entries(catCounts).map(([cid, val]) => {
+    const cat = (categories || []).find((c: any) => c.id === cid)
+    return { name: cat?.name ?? 'Lain', value: val, color: cat ? CAT_COLORS[cat.name] ?? '#0d9488' : '#0d9488' }
   }).sort((a, b) => b.value - a.value)
 
   // Status breakdown
-  const statusAgg = await db.enrollment.groupBy({
-    by: ['status'],
-    where: scope,
-    _count: { id: true },
-  })
-  const statusBreakdown = statusAgg.map((s) => ({
-    name: s.status, value: s._count.id, color: STATUS_COLORS[s.status] ?? '#6b7280',
-  }))
+  const { data: statusAgg } = await supabase.from(T.Enrollment).select('status')
+  const statusCounts: Record<string, number> = {}
+  for (const e of statusAgg || []) statusCounts[e.status] = (statusCounts[e.status] || 0) + 1
+  const statusBreakdown = Object.entries(statusCounts).map(([s, v]) => ({ name: s, value: v, color: STATUS_COLORS[s] ?? '#6b7280' }))
 
   // Top courses
-  const topCoursesRaw = await db.course.findMany({
-    where: scope,
-    orderBy: { enrolledCount: 'desc' },
-    take: 5,
-    select: { id: true, title: true, enrolledCount: true, rating: true },
-  })
-  const topCourses = topCoursesRaw.map((c) => ({
-    id: c.id, title: c.title, enrolled: c.enrolledCount, rating: c.rating,
-  }))
+  let topQ = supabase.from(T.Course).select('id, title, "enrolledCount", rating').order('enrolledCount', { ascending: false }).limit(5)
+  if (campusFilter) topQ = topQ.eq('campusId', campusFilter)
+  const { data: topRaw } = await topQ
+  const topCourses = (topRaw || []).map((c: any) => ({ id: c.id, title: c.title, enrolled: c.enrolledCount, rating: c.rating }))
 
   // Region performance
   const regionMap = new Map<string, { campuses: number; enrolled: number; completed: number }>()
-  for (const c of allCampuses) {
-    const r = c.region
-    if (!regionMap.has(r)) regionMap.set(r, { campuses: 0, enrolled: 0, completed: 0 })
-    const entry = regionMap.get(r)!
-    entry.campuses += 1
+  for (const c of visibleCampuses || []) {
+    if (!regionMap.has(c.region)) regionMap.set(c.region, { campuses: 0, enrolled: 0, completed: 0 })
+    regionMap.get(c.region)!.campuses += 1
   }
   for (const cb of completionByCampus) {
-    const campus = allCampuses.find((c) => c.code === cb.code)
+    const campus = (visibleCampuses || []).find((c: any) => c.code === cb.code)
     if (campus) {
       const entry = regionMap.get(campus.region)!
       entry.enrolled += cb.enrolled
@@ -120,8 +137,14 @@ export async function GET() {
   return ok({
     analytics: {
       totals: {
-        users, courses, enrollments, certificates, campuses,
-        completionRate, avgScore, activeLearners,
+        users: users.count || 0,
+        courses: courses.count || 0,
+        enrollments: enrollments.count || 0,
+        certificates: certificates.count || 0,
+        campuses: (campuses as any).count || (isHQ ? 0 : 1),
+        completionRate,
+        avgScore,
+        activeLearners: activeLearners || 0,
       },
       enrollmentsTrend: trend,
       completionByCampus,

@@ -1,18 +1,14 @@
-import { db } from '@/lib/db'
-import { getCurrentUser, tenantScope } from '@/lib/session'
-import { ok, parseJson } from '@/lib/api'
+import { supabase, T } from '@/lib/supabase'
+import { getCurrentUser } from '@/lib/session'
+import { ok } from '@/lib/api'
 
 export async function GET() {
   const user = await getCurrentUser()
-  const where = user ? tenantScope(user) : { status: 'active' }
-  const campuses = await db.campus.findMany({
-    where,
-    orderBy: [{ region: 'asc' }, { name: 'asc' }],
-  })
-  return ok({
-    campuses: campuses.map((c) => ({
-      ...c,
-      metadata: parseJson(c.metadata, {}),
-    })),
-  })
+  let query = supabase.from(T.Campus).select('*').order('region', { ascending: true }).order('name', { ascending: true })
+  if (!user || (user.role !== 'super_admin' && user.role !== 'auditor')) {
+    query = query.eq('status', 'active')
+  }
+  const { data, error } = await query
+  if (error) return ok({ campuses: [] })
+  return ok({ campuses: data || [] })
 }

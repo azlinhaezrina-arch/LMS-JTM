@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { getCurrentUser } from './session'
 
 export function ok(data: unknown, init?: ResponseInit) {
   return NextResponse.json({ success: true, data }, init)
@@ -17,16 +16,11 @@ export async function parseBody<T = unknown>(req: Request): Promise<T> {
   }
 }
 
-/** Parse a Prisma JSON string field safely. */
-export function parseJson<T = unknown>(value: unknown, fallback: T): T {
-  if (typeof value !== 'string') return fallback
-  try { return JSON.parse(value) as T } catch { return fallback }
-}
-
 /** Wrap a route handler with auth + error handling. */
-export function withUser<H extends (user: Awaited<ReturnType<typeof getCurrentUser>> & {}) => Promise<Response>>(handler: H) {
+export function withUser<H extends (user: Awaited<ReturnType<typeof import('./session').getCurrentUser>> & {}) => Promise<Response>>(handler: H) {
   return async (...args: Parameters<H>) => {
     try {
+      const { getCurrentUser } = await import('./session')
       const user = await getCurrentUser()
       // @ts-expect-error spread args
       return await handler(user, ...args)

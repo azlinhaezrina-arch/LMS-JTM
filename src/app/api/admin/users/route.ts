@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
-import { requireUser, tenantScope } from '@/lib/session'
-import { ok, fail, parseJson } from '@/lib/api'
+import { supabase, T } from '@/lib/supabase'
+import { requireUser } from '@/lib/session'
+import { ok, fail } from '@/lib/api'
 
 export async function GET(req: NextRequest) {
   const user = await requireUser()
@@ -12,22 +12,16 @@ export async function GET(req: NextRequest) {
   const role = searchParams.get('role')
   const search = searchParams.get('search')
 
-  const where: Record<string, unknown> = tenantScope(user)
-  if (role) where.role = role
-  if (search) {
-    where.OR = [{ name: { contains: search } }, { email: { contains: search } }]
-  }
+  let query = supabase
+    .from(T.User)
+    .select('id, name, email, role, status, campusId, campus:Campus(*), points, streak, "lastSignInAt", "createdAt", "preferredLang"')
+    .order('createdAt', { ascending: false })
+    .limit(200)
+  if (user.role !== 'super_admin' && user.role !== 'auditor') query = query.eq('campusId', user.campusId ?? '__none__')
+  if (role) query = query.eq('role', role)
+  if (search) query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%`)
 
-  const users = await db.user.findMany({
-    where,
-    select: {
-      id: true, name: true, email: true, role: true, status: true,
-      campusId: true, campus: true, points: true, streak: true,
-      lastSignInAt: true, createdAt: true, preferredLang: true,
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  })
-
-  return ok({ users: users.map((u) => ({ ...u, metadata: parseJson(null, {}) })) })
+  const { data, error } = await query
+  if (error) return ok({ users: [] })
+  return ok({ users: data || [] })
 }
